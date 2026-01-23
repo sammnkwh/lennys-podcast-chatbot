@@ -206,15 +206,15 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 6.1.3 Test conversation memory persists across turns
   - [x] 6.1.4 Run integration tests and verify all pass (107 passed, 6 skipped)
 
-- [ ] 6.2 End-to-end manual testing with sample queries
-  - [ ] 6.2.1 Test: "What does Lenny say about product-market fit?"
-  - [ ] 6.2.2 Test: "Who has talked about growth teams?"
-  - [ ] 6.2.3 Verify citations appear correctly
-  - [ ] 6.2.4 Verify follow-up buttons work
-  - [ ] 6.2.5 Verify conversation memory works across turns
+- [x] 6.2 End-to-end manual testing with sample queries
+  - [x] 6.2.1 Test: "What does Lenny say about product-market fit?"
+  - [x] 6.2.2 Test: "Who has talked about growth teams?"
+  - [x] 6.2.3 Verify citations appear correctly
+  - [x] 6.2.4 Verify follow-up buttons work
+  - [x] 6.2.5 Verify conversation memory works across turns
 
-- [ ] 6.3 Final commit and push
-  - [ ] 6.3.1 Review all files for any hardcoded secrets (should be none)
-  - [ ] 6.3.2 Update requirements.txt with final dependencies
-  - [ ] 6.3.3 Commit all changes with descriptive message
-  - [ ] 6.3.4 Push to GitHub
+- [x] 6.3 Final commit and push
+  - [x] 6.3.1 Review all files for any hardcoded secrets (should be none)
+  - [x] 6.3.2 Update requirements.txt with final dependencies
+  - [x] 6.3.3 Commit all changes with descriptive message
+  - [x] 6.3.4 Push to GitHub
