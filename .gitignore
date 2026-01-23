@@ -11,9 +11,11 @@ __pycache__/
 venv/
 env/
 .venv/
+.pytest_cache/
 
-# Uploaded documents (user data)
+# Data directories
 data/uploads/
+data/transcripts/
 
 # IDE
 .idea/
