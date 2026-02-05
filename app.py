@@ -27,7 +27,6 @@ from utils.llm_chain import (
     DEFAULT_TEMPERATURE
 )
 from utils.langfuse_logger import (
-    log_followups,
     create_session_id,
     is_langfuse_enabled
 )
@@ -76,8 +75,8 @@ def init_session_state():
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    if "followups" not in st.session_state:
-        st.session_state.followups = []
+    if "suggested_episodes" not in st.session_state:
+        st.session_state.suggested_episodes = []
 
     if "session_id" not in st.session_state:
         st.session_state.session_id = create_session_id()
@@ -95,7 +94,7 @@ def init_session_state():
 def clear_chat():
     """Clear chat history and start new conversation."""
     st.session_state.messages = []
-    st.session_state.followups = []
+    st.session_state.suggested_episodes = []
     st.session_state.session_id = create_session_id()
 
 
@@ -188,7 +187,7 @@ def render_sidebar():
             **Features:**
             - Semantic search across all episodes
             - Source citations with episode info
-            - Follow-up question suggestions
+            - Suggested episodes to explore further
 
             **Model:** Gemini 2.5 Flash
             """)
@@ -239,44 +238,70 @@ def index_transcripts():
             st.session_state.indexing = False
 
 
+def extract_suggested_episodes(search_results: list, max_episodes: int = 3) -> list:
+    """
+    Extract unique episodes from search results.
+
+    Args:
+        search_results: List of search results with metadata
+        max_episodes: Maximum number of episodes to return
+
+    Returns:
+        List of episode dicts with title, guest, youtube_url, publish_date
+    """
+    seen_titles = set()
+    episodes = []
+
+    for result in search_results:
+        metadata = result.get("metadata", {})
+        title = metadata.get("title")
+
+        if title and title not in seen_titles:
+            seen_titles.add(title)
+            episodes.append({
+                "title": title,
+                "guest": metadata.get("guest", "Unknown"),
+                "youtube_url": metadata.get("youtube_url", ""),
+                "publish_date": metadata.get("publish_date", "")
+            })
+
+        if len(episodes) >= max_episodes:
+            break
+
+    return episodes
+
+
 def render_chat_messages():
     """Render chat message history."""
     for i, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-            # Show follow-ups after the last assistant message
+            # Show suggested episodes after the last assistant message
             if (message["role"] == "assistant" and
                 i == len(st.session_state.messages) - 1 and
-                st.session_state.followups):
-                render_followup_buttons()
+                st.session_state.suggested_episodes):
+                render_suggested_episodes()
 
 
-def render_followup_buttons():
-    """Render follow-up question buttons."""
-    if not st.session_state.followups:
+def render_suggested_episodes():
+    """Render suggested episode cards."""
+    if not st.session_state.suggested_episodes:
         return
 
     st.markdown("---")
-    st.caption("💡 Suggested follow-up questions:")
+    st.caption("🎧 Suggested episodes to explore:")
 
-    # Create columns for buttons
-    cols = st.columns(len(st.session_state.followups))
+    for idx, episode in enumerate(st.session_state.suggested_episodes):
+        title = episode.get("title", "Unknown Episode")
+        guest = episode.get("guest", "Unknown")
+        youtube_url = episode.get("youtube_url", "")
 
-    for idx, (col, question) in enumerate(zip(cols, st.session_state.followups)):
-        with col:
-            # Truncate long questions for button display
-            display_text = question[:50] + "..." if len(question) > 50 else question
-
-            if st.button(
-                display_text,
-                key=f"followup_{idx}",
-                use_container_width=True,
-                help=question
-            ):
-                # Submit this question
-                handle_user_input(question)
-                st.rerun()
+        # Create a clickable episode card
+        if youtube_url:
+            st.markdown(f"**[{title}]({youtube_url})**  \n_{guest}_")
+        else:
+            st.markdown(f"**{title}**  \n_{guest}_")
 
 
 def handle_user_input(user_input: str):
@@ -287,8 +312,8 @@ def handle_user_input(user_input: str):
         "content": user_input
     })
 
-    # Clear previous follow-ups
-    st.session_state.followups = []
+    # Clear previous suggested episodes
+    st.session_state.suggested_episodes = []
 
     # Check if index has data
     if not index_exists():
@@ -331,16 +356,8 @@ def handle_user_input(user_input: str):
             "content": response["answer"]
         })
 
-        # Store follow-ups
-        st.session_state.followups = response.get("followups", [])
-
-        # Log to Langfuse
-        if st.session_state.followups:
-            log_followups(
-                followups=st.session_state.followups,
-                query=user_input,
-                session_id=st.session_state.session_id
-            )
+        # Extract suggested episodes from search results
+        st.session_state.suggested_episodes = extract_suggested_episodes(search_results)
 
     except Exception as e:
         st.session_state.messages.append({

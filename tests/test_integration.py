@@ -103,8 +103,8 @@ class TestLLMResponseGeneration:
     """Test LLM response generation"""
 
     @pytest.mark.skipif(not HAS_API_KEYS, reason="API keys not available")
-    def test_generates_response_with_followups(self):
-        """Should generate response with follow-up questions"""
+    def test_generates_response_with_context(self):
+        """Should generate response based on context"""
         from utils.llm_chain import generate_response
 
         # Mock search results
@@ -124,7 +124,6 @@ class TestLLMResponseGeneration:
         )
 
         assert "answer" in response
-        assert "followups" in response
         assert len(response["answer"]) > 0
 
     @pytest.mark.skipif(not HAS_API_KEYS, reason="API keys not available")
@@ -229,8 +228,8 @@ class TestContextFormatting:
 class TestResponseParsing:
     """Test response parsing"""
 
-    def test_parses_answer_and_followups(self):
-        """Should correctly parse answer and follow-up questions"""
+    def test_parses_answer(self):
+        """Should correctly parse answer from LLM output"""
         from utils.llm_chain import parse_response
 
         llm_output = """Product-market fit is when your product satisfies strong market demand.
@@ -239,19 +238,13 @@ Key indicators include:
 - High user retention
 - Organic word-of-mouth growth
 - Users actively seeking your product
-
-FOLLOW-UP QUESTIONS:
-- How long does it typically take to achieve product-market fit?
-- What metrics best indicate product-market fit?
-- How do you know when you don't have product-market fit?
 """
 
         result = parse_response(llm_output)
 
         assert "answer" in result
-        assert "followups" in result
-        assert len(result["followups"]) >= 2
         assert "product-market fit" in result["answer"].lower()
+        assert "High user retention" in result["answer"]
 
 
 class TestEndToEndPipeline:
@@ -285,12 +278,10 @@ class TestEndToEndPipeline:
 
         # 3. Verify response structure
         assert "answer" in response
-        assert "followups" in response
         assert len(response["answer"]) > 100, "Should have substantial answer"
 
         print(f"\nQuery: {query}")
         print(f"Answer preview: {response['answer'][:200]}...")
-        print(f"Follow-ups: {response['followups']}")
 
 
 class TestLangfuseIntegration:
@@ -314,6 +305,91 @@ class TestLangfuseIntegration:
             assert result is False
 
 
+class TestExtractSuggestedEpisodes:
+    """Test episode extraction from search results"""
+
+    def test_extracts_unique_episodes(self):
+        """Should extract unique episodes from search results"""
+        from app import extract_suggested_episodes
+
+        search_results = [
+            {
+                "text": "Content 1",
+                "metadata": {
+                    "title": "Episode A",
+                    "guest": "Guest A",
+                    "youtube_url": "https://youtube.com/a",
+                    "publish_date": "2023-01-01"
+                }
+            },
+            {
+                "text": "Content 2",
+                "metadata": {
+                    "title": "Episode B",
+                    "guest": "Guest B",
+                    "youtube_url": "https://youtube.com/b",
+                    "publish_date": "2023-02-01"
+                }
+            }
+        ]
+
+        episodes = extract_suggested_episodes(search_results)
+
+        assert len(episodes) == 2
+        assert episodes[0]["title"] == "Episode A"
+        assert episodes[1]["title"] == "Episode B"
+
+    def test_limits_to_max_episodes(self):
+        """Should limit to max_episodes parameter"""
+        from app import extract_suggested_episodes
+
+        search_results = [
+            {"text": f"Content {i}", "metadata": {"title": f"Episode {i}", "guest": f"Guest {i}"}}
+            for i in range(10)
+        ]
+
+        episodes = extract_suggested_episodes(search_results, max_episodes=3)
+        assert len(episodes) == 3
+
+    def test_deduplicates_by_title(self):
+        """Should not include same episode twice"""
+        from app import extract_suggested_episodes
+
+        search_results = [
+            {"text": "Chunk 1", "metadata": {"title": "Same Episode", "guest": "Guest"}},
+            {"text": "Chunk 2", "metadata": {"title": "Same Episode", "guest": "Guest"}},
+            {"text": "Chunk 3", "metadata": {"title": "Different Episode", "guest": "Guest"}}
+        ]
+
+        episodes = extract_suggested_episodes(search_results)
+
+        assert len(episodes) == 2
+        titles = [e["title"] for e in episodes]
+        assert titles.count("Same Episode") == 1
+
+    def test_handles_missing_metadata(self):
+        """Should handle missing metadata gracefully"""
+        from app import extract_suggested_episodes
+
+        search_results = [
+            {"text": "Content", "metadata": {"title": "Episode Title"}}
+        ]
+
+        episodes = extract_suggested_episodes(search_results)
+
+        assert len(episodes) == 1
+        assert episodes[0]["title"] == "Episode Title"
+        assert episodes[0]["guest"] == "Unknown"
+        assert episodes[0]["youtube_url"] == ""
+
+    def test_returns_empty_for_no_results(self):
+        """Should return empty list for no results"""
+        from app import extract_suggested_episodes
+
+        episodes = extract_suggested_episodes([])
+        assert episodes == []
+
+
 class TestAppImports:
     """Test that the main app imports correctly"""
 
@@ -327,3 +403,4 @@ class TestAppImports:
         assert hasattr(app, "handle_user_input")
         assert hasattr(app, "render_sidebar")
         assert hasattr(app, "render_chat_messages")
+        assert hasattr(app, "extract_suggested_episodes")

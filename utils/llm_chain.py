@@ -30,9 +30,6 @@ Guidelines:
 - If the context doesn't contain relevant information, say so honestly
 - Be conversational and helpful
 - Keep answers concise but comprehensive
-
-After your answer, provide 3-5 follow-up questions that the user might want to explore next.
-Format the follow-up questions in a section starting with "FOLLOW-UP QUESTIONS:" with each question on a new line starting with "- ".
 """
 
 
@@ -162,76 +159,16 @@ CONTEXT FROM PODCAST TRANSCRIPTS:
 
 def parse_response(llm_output: str) -> Dict[str, Any]:
     """
-    Parse LLM output to separate answer from follow-up questions.
+    Parse LLM output and return the answer.
 
     Args:
         llm_output: Raw LLM response text
 
     Returns:
-        Dict with 'answer' (str) and 'followups' (list[str])
+        Dict with 'answer' (str)
     """
-    # Try to find the follow-up questions section
-    followup_patterns = [
-        r"FOLLOW-UP QUESTIONS?:",
-        r"Follow-up Questions?:",
-        r"Follow-Up Questions?:",
-        r"Suggested Questions?:",
-        r"You might also ask:",
-        r"Related questions?:",
-    ]
-
-    answer = llm_output
-    followups = []
-
-    for pattern in followup_patterns:
-        match = re.search(pattern, llm_output, re.IGNORECASE)
-        if match:
-            # Split at the pattern
-            answer = llm_output[:match.start()].strip()
-            followup_section = llm_output[match.end():].strip()
-
-            # Extract individual questions
-            # Look for lines starting with -, *, or numbers
-            question_pattern = r'(?:^|\n)\s*(?:[-*•]|\d+[.):])\s*(.+?)(?=\n\s*(?:[-*•]|\d+[.):])|$)'
-            matches = re.findall(question_pattern, followup_section, re.MULTILINE | re.DOTALL)
-
-            for q in matches:
-                q = q.strip()
-                # Clean up the question
-                q = re.sub(r'\s+', ' ', q)
-                if q and len(q) > 10:  # Filter out too-short strings
-                    # Ensure it ends with a question mark
-                    if not q.endswith('?'):
-                        q = q.rstrip('.') + '?'
-                    followups.append(q)
-
-            break
-
-    # If no follow-ups found using patterns, try simple line-based extraction
-    if not followups:
-        lines = llm_output.split('\n')
-        in_followup_section = False
-
-        for line in lines:
-            line = line.strip()
-
-            # Check if we're entering a follow-up section
-            if any(re.search(p, line, re.IGNORECASE) for p in followup_patterns):
-                in_followup_section = True
-                continue
-
-            if in_followup_section and line:
-                # Remove bullet points or numbers
-                cleaned = re.sub(r'^[-*•\d.):]+\s*', '', line).strip()
-                if cleaned and len(cleaned) > 10 and '?' in cleaned:
-                    followups.append(cleaned)
-
-    # Limit to 5 follow-ups
-    followups = followups[:5]
-
     return {
-        "answer": answer,
-        "followups": followups
+        "answer": llm_output.strip()
     }
 
 
@@ -255,7 +192,7 @@ def generate_response(
         temperature: Sampling temperature
 
     Returns:
-        Dict with 'answer', 'followups', and 'raw_response'
+        Dict with 'answer' and 'raw_response'
     """
     # Format context from search results
     context = format_context(search_results)
@@ -278,7 +215,6 @@ def generate_response(
 
     return {
         "answer": parsed["answer"],
-        "followups": parsed["followups"],
         "raw_response": raw_output
     }
 
@@ -315,21 +251,11 @@ if __name__ == "__main__":
 
     # Test response parsing
     print("\n2. Testing response parsing...")
-    sample_response = """Based on the podcast transcripts, product-market fit is when...
-
-This was discussed in detail by several guests.
+    sample_response = """Based on the podcast transcripts, product-market fit is when customers are actively seeking your product.
 
 From "Finding Product-Market Fit" with Marc Andreessen (2023-05-15):
 The key insight is that you know you have PMF when customers are pulling the product from you.
-
-FOLLOW-UP QUESTIONS:
-- How do you measure product-market fit quantitatively?
-- What are common signs that you don't have product-market fit?
-- How long does it typically take to achieve product-market fit?
 """
 
     parsed = parse_response(sample_response)
     print(f"✓ Answer length: {len(parsed['answer'])} chars")
-    print(f"✓ Follow-ups found: {len(parsed['followups'])}")
-    for q in parsed['followups']:
-        print(f"  - {q}")

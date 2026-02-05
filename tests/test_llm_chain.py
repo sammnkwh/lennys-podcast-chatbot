@@ -197,67 +197,15 @@ class TestParseResponse:
 
     def test_extracts_answer(self):
         """Should extract answer text"""
-        response = """This is the answer.
-
-FOLLOW-UP QUESTIONS:
-- Question 1?
-- Question 2?
-"""
+        response = "This is the answer."
         result = parse_response(response)
-        assert "This is the answer" in result["answer"]
+        assert result["answer"] == "This is the answer."
 
-    def test_extracts_followups(self):
-        """Should extract follow-up questions"""
-        response = """Answer here.
-
-FOLLOW-UP QUESTIONS:
-- How do you measure this?
-- What are the common mistakes?
-- When should you start?
-"""
+    def test_strips_whitespace(self):
+        """Should strip leading/trailing whitespace"""
+        response = "  Answer with whitespace.  \n\n"
         result = parse_response(response)
-
-        assert len(result["followups"]) >= 2
-        assert any("measure" in q.lower() for q in result["followups"])
-
-    def test_handles_no_followups(self):
-        """Should handle response without follow-ups"""
-        response = "Just an answer without follow-up questions."
-        result = parse_response(response)
-
-        assert result["answer"] == response
-        assert result["followups"] == []
-
-    def test_handles_different_formats(self):
-        """Should handle different follow-up section formats"""
-        formats = [
-            "FOLLOW-UP QUESTIONS:\n- Q1?\n- Q2?",
-            "Follow-up Questions:\n- Q1?\n- Q2?",
-            "Suggested Questions:\n1. Q1?\n2. Q2?",
-        ]
-
-        for fmt in formats:
-            response = f"Answer.\n\n{fmt}"
-            result = parse_response(response)
-            # Should find at least some questions
-            assert "answer" in result
-            assert "followups" in result
-
-    def test_limits_followups_to_five(self):
-        """Should limit follow-ups to 5"""
-        response = """Answer.
-
-FOLLOW-UP QUESTIONS:
-- Question 1?
-- Question 2?
-- Question 3?
-- Question 4?
-- Question 5?
-- Question 6?
-- Question 7?
-"""
-        result = parse_response(response)
-        assert len(result["followups"]) <= 5
+        assert result["answer"] == "Answer with whitespace."
 
     def test_returns_dict_format(self):
         """Should return dict with correct keys"""
@@ -265,9 +213,19 @@ FOLLOW-UP QUESTIONS:
 
         assert isinstance(result, dict)
         assert "answer" in result
-        assert "followups" in result
         assert isinstance(result["answer"], str)
-        assert isinstance(result["followups"], list)
+
+    def test_preserves_multiline_content(self):
+        """Should preserve multiline content"""
+        response = """Line 1.
+
+Line 2.
+
+Line 3."""
+        result = parse_response(response)
+        assert "Line 1" in result["answer"]
+        assert "Line 2" in result["answer"]
+        assert "Line 3" in result["answer"]
 
 
 class TestGenerateResponse:
@@ -275,10 +233,10 @@ class TestGenerateResponse:
 
     @patch("utils.llm_chain.get_llm")
     def test_returns_correct_format(self, mock_get_llm):
-        """Should return dict with answer, followups, raw_response"""
+        """Should return dict with answer and raw_response"""
         mock_llm = Mock()
         mock_response = Mock()
-        mock_response.content = "Answer here.\n\nFOLLOW-UP QUESTIONS:\n- Q1?"
+        mock_response.content = "Answer here based on the context."
         mock_llm.invoke.return_value = mock_response
         mock_get_llm.return_value = mock_llm
 
@@ -291,7 +249,6 @@ class TestGenerateResponse:
         )
 
         assert "answer" in result
-        assert "followups" in result
         assert "raw_response" in result
 
     @patch("utils.llm_chain.get_llm")
