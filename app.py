@@ -28,8 +28,10 @@ from utils.llm_chain import (
 )
 from utils.langfuse_logger import (
     create_session_id,
-    is_langfuse_enabled
+    is_langfuse_enabled,
+    log_query_response
 )
+import time
 
 # Page configuration
 st.set_page_config(
@@ -341,7 +343,8 @@ def handle_user_input(user_input: str):
             for msg in st.session_state.messages[:-1]  # Exclude current message
         ][-10:]  # Keep last 10 messages for context
 
-        # Generate response
+        # Generate response with timing
+        start_time = time.time()
         response = generate_response(
             query=user_input,
             search_results=search_results,
@@ -349,6 +352,7 @@ def handle_user_input(user_input: str):
             system_prompt=st.session_state.system_prompt,
             temperature=st.session_state.temperature
         )
+        latency_ms = (time.time() - start_time) * 1000
 
         # Add assistant response to history
         st.session_state.messages.append({
@@ -358,6 +362,16 @@ def handle_user_input(user_input: str):
 
         # Extract suggested episodes from search results
         st.session_state.suggested_episodes = extract_suggested_episodes(search_results)
+
+        # Log to Langfuse for evaluation
+        log_query_response(
+            query=user_input,
+            response=response["answer"],
+            suggested_episodes=st.session_state.suggested_episodes,
+            context_sources=search_results,
+            session_id=st.session_state.session_id,
+            latency_ms=latency_ms
+        )
 
     except Exception as e:
         st.session_state.messages.append({

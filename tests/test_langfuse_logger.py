@@ -6,6 +6,7 @@ Uses mocking to avoid real Langfuse API calls.
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
+from contextlib import contextmanager
 import os
 
 from utils.langfuse_logger import (
@@ -100,6 +101,31 @@ class TestGetLangfuseClient:
             logger._langfuse_client = None
 
 
+def create_mock_langfuse_client():
+    """Helper to create a properly mocked Langfuse v3 client"""
+    mock_client = Mock()
+    mock_client.create_trace_id.return_value = "test-trace-id"
+
+    # Create context manager mocks for spans and generations
+    @contextmanager
+    def mock_span(*args, **kwargs):
+        span = Mock()
+        span.update = Mock()
+        yield span
+
+    @contextmanager
+    def mock_generation(*args, **kwargs):
+        yield Mock()
+
+    mock_client.start_as_current_span = Mock(side_effect=mock_span)
+    mock_client.start_as_current_generation = Mock(side_effect=mock_generation)
+    mock_client.update_current_trace = Mock()
+    mock_client.create_event = Mock()
+    mock_client.flush = Mock()
+
+    return mock_client
+
+
 class TestLogFollowups:
     """Tests for log_followups() function"""
 
@@ -120,11 +146,9 @@ class TestLogFollowups:
             assert result is False
 
     @patch("utils.langfuse_logger.get_langfuse_client")
-    def test_creates_trace_with_followups(self, mock_get_client):
-        """Should create trace and log follow-ups"""
-        mock_client = Mock()
-        mock_trace = Mock()
-        mock_client.trace.return_value = mock_trace
+    def test_creates_span_with_followups(self, mock_get_client):
+        """Should create span and log follow-ups"""
+        mock_client = create_mock_langfuse_client()
         mock_get_client.return_value = mock_client
 
         result = log_followups(
@@ -134,18 +158,17 @@ class TestLogFollowups:
         )
 
         assert result is True
-        mock_client.trace.assert_called_once()
+        mock_client.create_trace_id.assert_called_once()
+        mock_client.start_as_current_span.assert_called_once()
         # Should log each followup as generation
-        assert mock_trace.generation.call_count == 2
-        # Should log all followups as event
-        mock_trace.event.assert_called_once()
+        assert mock_client.start_as_current_generation.call_count == 2
         mock_client.flush.assert_called_once()
 
     @patch("utils.langfuse_logger.get_langfuse_client")
     def test_handles_exception_gracefully(self, mock_get_client):
         """Should handle exceptions and return False"""
         mock_client = Mock()
-        mock_client.trace.side_effect = Exception("API error")
+        mock_client.create_trace_id.side_effect = Exception("API error")
         mock_get_client.return_value = mock_client
 
         result = log_followups(["Q?"], "query")
@@ -165,7 +188,7 @@ class TestLogQueryResponse:
             result = log_query_response(
                 query="test",
                 response="answer",
-                followups=[],
+                suggested_episodes=[],
                 context_sources=[]
             )
             assert result is False
@@ -173,28 +196,118 @@ class TestLogQueryResponse:
     @patch("utils.langfuse_logger.get_langfuse_client")
     def test_logs_complete_interaction(self, mock_get_client):
         """Should log query, response, and context"""
-        mock_client = Mock()
-        mock_trace = Mock()
-        mock_client.trace.return_value = mock_trace
+        mock_client = create_mock_langfuse_client()
         mock_get_client.return_value = mock_client
 
         result = log_query_response(
             query="What is PMF?",
             response="Product-market fit is...",
-            followups=["How to measure?"],
+            suggested_episodes=[
+                {"title": "Superhuman Episode", "guest": "Rahul Vohra", "youtube_url": "https://youtube.com/example"}
+            ],
             context_sources=[
-                {"metadata": {"title": "Episode 1"}}
+                {"text": "PMF content here...", "score": 0.89, "metadata": {"title": "Episode 1", "guest": "Guest 1"}}
             ],
             session_id="test-session",
             latency_ms=150.5
         )
 
         assert result is True
-        mock_client.trace.assert_called_once()
-        # Should have span for retrieval
-        mock_trace.span.assert_called()
-        # Should have generation for LLM
-        mock_trace.generation.assert_called()
+        mock_client.create_trace_id.assert_called_once()
+        # Main span + retrieval span = 2 calls
+        assert mock_client.start_as_current_span.call_count == 2
+        # LLM generation
+        mock_client.start_as_current_generation.assert_called_once()
+        # Event for suggested episodes
+        mock_client.create_event.assert_called_once()
+
+    @patch("utils.langfuse_logger.get_langfuse_client")
+    def test_logs_individual_chunk_fields(self, mock_get_client):
+        """Should log each chunk as individual fields for spreadsheet export"""
+        mock_client = create_mock_langfuse_client()
+        mock_get_client.return_value = mock_client
+
+        context_sources = [
+            {"text": "First chunk text", "score": 0.95, "metadata": {"title": "Episode A", "guest": "Guest A"}},
+            {"text": "Second chunk text", "score": 0.87, "metadata": {"title": "Episode B", "guest": "Guest B"}},
+        ]
+
+        log_query_response(
+            query="Test query",
+            response="Test response",
+            suggested_episodes=[],
+            context_sources=context_sources,
+            session_id="test-session"
+        )
+
+        # Check that start_as_current_span was called with individual chunk fields in metadata
+        call_kwargs = mock_client.start_as_current_span.call_args_list[0][1]
+        metadata = call_kwargs["metadata"]
+
+        assert metadata["chunk_1_text"] == "First chunk text"
+        assert metadata["chunk_1_source"] == "Episode A | Guest A"
+        assert metadata["chunk_1_score"] == 0.95
+
+        assert metadata["chunk_2_text"] == "Second chunk text"
+        assert metadata["chunk_2_source"] == "Episode B | Guest B"
+        assert metadata["chunk_2_score"] == 0.87
+
+    @patch("utils.langfuse_logger.get_langfuse_client")
+    def test_logs_individual_episode_fields(self, mock_get_client):
+        """Should log each suggested episode as individual fields"""
+        mock_client = create_mock_langfuse_client()
+        mock_get_client.return_value = mock_client
+
+        suggested_episodes = [
+            {"title": "How Superhuman Built", "guest": "Rahul Vohra", "youtube_url": "https://youtube.com/ep1"},
+            {"title": "Growth Tactics", "guest": "Brian Balfour", "youtube_url": "https://youtube.com/ep2"},
+        ]
+
+        log_query_response(
+            query="Test query",
+            response="Test response",
+            suggested_episodes=suggested_episodes,
+            context_sources=[],
+            session_id="test-session"
+        )
+
+        # Check that start_as_current_span was called with individual episode fields in metadata
+        call_kwargs = mock_client.start_as_current_span.call_args_list[0][1]
+        metadata = call_kwargs["metadata"]
+
+        assert metadata["suggested_1_title"] == "How Superhuman Built"
+        assert metadata["suggested_1_guest"] == "Rahul Vohra"
+        assert metadata["suggested_1_url"] == "https://youtube.com/ep1"
+
+        assert metadata["suggested_2_title"] == "Growth Tactics"
+        assert metadata["suggested_2_guest"] == "Brian Balfour"
+        assert metadata["suggested_2_url"] == "https://youtube.com/ep2"
+
+    @patch("utils.langfuse_logger.get_langfuse_client")
+    def test_handles_missing_metadata_gracefully(self, mock_get_client):
+        """Should handle chunks with missing metadata fields"""
+        mock_client = create_mock_langfuse_client()
+        mock_get_client.return_value = mock_client
+
+        # Chunk with minimal metadata
+        context_sources = [
+            {"text": "Some text", "metadata": {"title": "Episode Only"}},  # No guest, no score
+        ]
+
+        log_query_response(
+            query="Test query",
+            response="Test response",
+            suggested_episodes=[],
+            context_sources=context_sources,
+            session_id="test-session"
+        )
+
+        call_kwargs = mock_client.start_as_current_span.call_args_list[0][1]
+        metadata = call_kwargs["metadata"]
+
+        assert metadata["chunk_1_text"] == "Some text"
+        assert metadata["chunk_1_source"] == "Episode Only"  # No guest, so just title
+        assert metadata["chunk_1_score"] == 0.0  # Default score
 
 
 class TestCreateSessionId:

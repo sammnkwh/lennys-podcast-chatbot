@@ -1,8 +1,8 @@
 """
-Langfuse Logger for Lenny's Podcast RAG Chatbot
+Langfuse Logger for Lenny Bot
 
-Handles optional logging of follow-up questions to Langfuse
-for evaluation and analytics.
+Handles logging of query-response interactions to Langfuse
+for LLM-as-a-judge evaluation and analytics.
 """
 
 import os
@@ -94,38 +94,39 @@ def log_followups(
         if session_id is None:
             session_id = str(uuid.uuid4())
 
-        # Create a trace for this interaction
-        trace = client.trace(
+        trace_id = client.create_trace_id()
+        trace_context = {"trace_id": trace_id}
+
+        # Create the main span for followups
+        with client.start_as_current_span(
             name="followup_questions",
-            session_id=session_id,
+            trace_context=trace_context,
+            input=query,
             metadata={
-                "source": "lenny-podcast-rag",
+                "source": "Lenny Bot",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "followup_count": len(followups),
                 **(metadata or {})
             }
-        )
+        ) as span:
+            # Set session_id on the trace
+            client.update_current_trace(session_id=session_id)
 
-        # Log each follow-up as a generation
-        for i, followup in enumerate(followups):
-            trace.generation(
-                name=f"followup_{i + 1}",
-                input=query,
-                output=followup,
-                metadata={
-                    "followup_index": i + 1,
-                    "total_followups": len(followups)
-                }
-            )
+            # Log each follow-up as a generation
+            for i, followup in enumerate(followups):
+                with client.start_as_current_generation(
+                    name=f"followup_{i + 1}",
+                    input=query,
+                    output=followup,
+                    metadata={
+                        "followup_index": i + 1,
+                        "total_followups": len(followups)
+                    }
+                ):
+                    pass
 
-        # Also log all follow-ups together as an event
-        trace.event(
-            name="all_followups",
-            input=query,
-            output="\n".join(f"- {q}" for q in followups),
-            metadata={
-                "followup_count": len(followups)
-            }
-        )
+            # Update span with combined output
+            span.update(output="\n".join(f"- {q}" for q in followups))
 
         # Flush to ensure data is sent
         client.flush()
@@ -140,7 +141,7 @@ def log_followups(
 def log_query_response(
     query: str,
     response: str,
-    followups: List[str],
+    suggested_episodes: List[Dict[str, Any]],
     context_sources: List[Dict[str, Any]],
     session_id: Optional[str] = None,
     latency_ms: Optional[float] = None
@@ -148,11 +149,14 @@ def log_query_response(
     """
     Log a complete query-response interaction to Langfuse.
 
+    Each chunk and suggested episode is logged as individual fields
+    for easy export to spreadsheets for LLM-as-a-judge evaluation.
+
     Args:
         query: User's question
         response: Assistant's answer
-        followups: Generated follow-up questions
-        context_sources: List of sources used (with metadata)
+        suggested_episodes: List of suggested episode dicts with title, guest, youtube_url
+        context_sources: List of search results with text, score, and metadata
         session_id: Optional session ID
         latency_ms: Optional response latency in milliseconds
 
@@ -167,45 +171,84 @@ def log_query_response(
         if session_id is None:
             session_id = str(uuid.uuid4())
 
-        # Create trace for the full interaction
-        trace = client.trace(
+        trace_id = client.create_trace_id()
+        trace_context = {"trace_id": trace_id}
+
+        # Build metadata with individual chunk fields
+        metadata = {
+            "source": "Lenny Bot",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "suggested_episode_count": len(suggested_episodes),
+            "context_count": len(context_sources),
+            "latency_ms": latency_ms
+        }
+
+        # Add individual chunk fields (chunk_1_text, chunk_1_source, chunk_1_score, etc.)
+        for i, chunk in enumerate(context_sources):
+            chunk_num = i + 1
+            chunk_metadata = chunk.get("metadata", {})
+
+            # Get chunk text
+            chunk_text = chunk.get("text", "")
+
+            # Build source string: "Episode Title | Guest Name"
+            title = chunk_metadata.get("title", "Unknown")
+            guest = chunk_metadata.get("guest", "")
+            chunk_source = f"{title} | {guest}" if guest else title
+
+            # Get similarity score
+            chunk_score = chunk.get("score", 0.0)
+
+            metadata[f"chunk_{chunk_num}_text"] = chunk_text
+            metadata[f"chunk_{chunk_num}_source"] = chunk_source
+            metadata[f"chunk_{chunk_num}_score"] = round(chunk_score, 4) if chunk_score else 0.0
+
+        # Add individual suggested episode fields
+        for i, episode in enumerate(suggested_episodes):
+            ep_num = i + 1
+            metadata[f"suggested_{ep_num}_title"] = episode.get("title", "")
+            metadata[f"suggested_{ep_num}_guest"] = episode.get("guest", "")
+            metadata[f"suggested_{ep_num}_url"] = episode.get("youtube_url", "")
+
+        # Create the main trace span
+        with client.start_as_current_span(
             name="rag_query",
-            session_id=session_id,
+            trace_context=trace_context,
             input=query,
             output=response,
-            metadata={
-                "source": "lenny-podcast-rag",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "followup_count": len(followups),
-                "context_count": len(context_sources),
-                "latency_ms": latency_ms
-            }
-        )
+            metadata=metadata
+        ):
+            # Set session_id on the trace
+            client.update_current_trace(session_id=session_id)
 
-        # Log the retrieval step
-        source_titles = [s.get("metadata", {}).get("title", "Unknown") for s in context_sources]
-        trace.span(
-            name="retrieval",
-            input=query,
-            output=f"Retrieved {len(context_sources)} sources: {', '.join(source_titles)}"
-        )
+            # Log the retrieval step
+            source_titles = [s.get("metadata", {}).get("title", "Unknown") for s in context_sources]
+            with client.start_as_current_span(
+                name="retrieval",
+                input=query,
+                output=f"Retrieved {len(context_sources)} sources: {', '.join(source_titles)}"
+            ):
+                pass
 
-        # Log the generation step
-        trace.generation(
-            name="llm_response",
-            input=query,
-            output=response,
-            metadata={
-                "model": "gemini-2.5-flash"
-            }
-        )
+            # Log the generation step
+            with client.start_as_current_generation(
+                name="llm_response",
+                input=query,
+                output=response,
+                metadata={"model": "gemini-2.5-flash"}
+            ):
+                pass
 
-        # Log follow-ups
-        if followups:
-            trace.event(
-                name="followup_questions",
-                output="\n".join(f"- {q}" for q in followups)
-            )
+            # Log suggested episodes as an event
+            if suggested_episodes:
+                episode_lines = [
+                    f"- {ep.get('title', 'Unknown')} ({ep.get('guest', 'Unknown')})"
+                    for ep in suggested_episodes
+                ]
+                client.create_event(
+                    name="suggested_episodes",
+                    output="\n".join(episode_lines)
+                )
 
         client.flush()
         return True
@@ -245,14 +288,18 @@ if __name__ == "__main__":
     print(f"\n1. Langfuse enabled: {is_langfuse_enabled()}")
 
     if is_langfuse_enabled():
-        print("\n2. Testing log_followups...")
-        result = log_followups(
-            followups=[
-                "What is product-market fit?",
-                "How do you measure PMF?"
+        print("\n2. Testing log_query_response...")
+        result = log_query_response(
+            query="What is product-market fit?",
+            response="Product-market fit is when your product meets a strong market demand.",
+            suggested_episodes=[
+                {"title": "How Superhuman Built an Engine", "guest": "Rahul Vohra", "youtube_url": "https://youtube.com/example"}
             ],
-            query="Tell me about growth",
-            session_id="test-session"
+            context_sources=[
+                {"text": "PMF is when customers love your product...", "score": 0.89, "metadata": {"title": "Superhuman", "guest": "Rahul Vohra"}}
+            ],
+            session_id="test-session",
+            latency_ms=150.5
         )
         print(f"   Logged: {result}")
     else:
