@@ -240,6 +240,35 @@ def index_transcripts():
             st.session_state.indexing = False
 
 
+def parse_duration_to_seconds(duration_str: str) -> int | None:
+    """
+    Parse a duration string like '1:54:40' or '54:40' into total seconds.
+
+    Returns:
+        Total seconds, or None if parsing fails
+    """
+    try:
+        parts = duration_str.strip().split(":")
+        parts = [int(p) for p in parts]
+        if len(parts) == 3:
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        elif len(parts) == 2:
+            return parts[0] * 60 + parts[1]
+        return None
+    except (ValueError, AttributeError):
+        return None
+
+
+def format_timestamp(total_seconds: int) -> str:
+    """Format seconds as H:MM:SS or MM:SS."""
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
 def extract_suggested_episodes(search_results: list, max_episodes: int = 3) -> list:
     """
     Extract unique episodes from search results.
@@ -249,7 +278,7 @@ def extract_suggested_episodes(search_results: list, max_episodes: int = 3) -> l
         max_episodes: Maximum number of episodes to return
 
     Returns:
-        List of episode dicts with title, guest, youtube_url, publish_date
+        List of episode dicts with title, guest, youtube_url, publish_date, estimated_timestamp
     """
     seen_titles = set()
     episodes = []
@@ -260,11 +289,26 @@ def extract_suggested_episodes(search_results: list, max_episodes: int = 3) -> l
 
         if title and title not in seen_titles:
             seen_titles.add(title)
+
+            # Compute estimated timestamp
+            estimated_timestamp = ""
+            chunk_id = metadata.get("chunk_id")
+            chunk_total = metadata.get("chunk_total")
+            duration_seconds = metadata.get("duration_seconds")
+            duration_str = metadata.get("duration", "")
+
+            if chunk_id is not None and chunk_total and chunk_total > 0:
+                total_secs = duration_seconds or parse_duration_to_seconds(duration_str)
+                if total_secs:
+                    start_secs = int((chunk_id / chunk_total) * total_secs)
+                    estimated_timestamp = f"~{format_timestamp(start_secs)}"
+
             episodes.append({
                 "title": title,
                 "guest": metadata.get("guest", "Unknown"),
                 "youtube_url": metadata.get("youtube_url", ""),
-                "publish_date": metadata.get("publish_date", "")
+                "publish_date": metadata.get("publish_date", ""),
+                "estimated_timestamp": estimated_timestamp
             })
 
         if len(episodes) >= max_episodes:
@@ -299,11 +343,14 @@ def render_suggested_episodes():
         guest = episode.get("guest", "Unknown")
         youtube_url = episode.get("youtube_url", "")
 
+        timestamp = episode.get("estimated_timestamp", "")
+        timestamp_label = f" ({timestamp})" if timestamp else ""
+
         # Create a clickable episode card
         if youtube_url:
-            st.markdown(f"**[{title}]({youtube_url})**  \n_{guest}_")
+            st.markdown(f"**[{title}]({youtube_url})**{timestamp_label}  \n_{guest}_")
         else:
-            st.markdown(f"**{title}**  \n_{guest}_")
+            st.markdown(f"**{title}**{timestamp_label}  \n_{guest}_")
 
 
 def handle_user_input(user_input: str):

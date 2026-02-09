@@ -113,7 +113,7 @@ class TestGetEmbeddingsModel:
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}):
             model = get_embeddings_model()
             mock_embeddings.assert_called_once()
-            assert "text-embedding-004" in str(mock_embeddings.call_args)
+            assert "gemini-embedding-001" in str(mock_embeddings.call_args)
 
 
 class TestGenerateChunkId:

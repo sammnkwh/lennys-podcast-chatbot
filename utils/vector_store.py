@@ -18,11 +18,12 @@ load_dotenv()
 
 # Constants
 INDEX_NAME = "lennys-podcast"
-EMBEDDING_MODEL = "models/text-embedding-004"
+EMBEDDING_MODEL = "models/gemini-embedding-001"
 EMBEDDING_DIMENSIONS = 768
 PINECONE_CLOUD = "aws"
 PINECONE_REGION = "us-east-1"
 BATCH_SIZE = 100  # Pinecone upsert batch size
+EMBED_BATCH_SIZE = 50  # Texts per embedding API call (to stay under rate limits)
 
 
 def get_pinecone_client() -> Pinecone:
@@ -79,9 +80,13 @@ def get_or_create_index(
     return pc.Index(index_name)
 
 
-def get_embeddings_model() -> GoogleGenerativeAIEmbeddings:
+def get_embeddings_model(task_type: str = "retrieval_query") -> GoogleGenerativeAIEmbeddings:
     """
-    Get Google's text-embedding-004 model.
+    Get Google's gemini-embedding-001 model.
+
+    Args:
+        task_type: "retrieval_query" for search queries,
+                   "retrieval_document" for indexing documents
 
     Returns:
         GoogleGenerativeAIEmbeddings instance
@@ -95,7 +100,9 @@ def get_embeddings_model() -> GoogleGenerativeAIEmbeddings:
 
     return GoogleGenerativeAIEmbeddings(
         model=EMBEDDING_MODEL,
-        google_api_key=api_key
+        google_api_key=api_key,
+        task_type=task_type,
+        output_dimensionality=EMBEDDING_DIMENSIONS,
     )
 
 
@@ -136,7 +143,7 @@ def prepare_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     # Fields to keep for citations and filtering
     keep_fields = [
         "guest", "title", "publish_date", "guest_slug",
-        "chunk_id", "chunk_total", "duration", "youtube_url"
+        "chunk_id", "chunk_total", "duration", "duration_seconds", "youtube_url"
     ]
 
     for key in keep_fields:
@@ -176,7 +183,7 @@ def store_chunks(
         return 0
 
     index = get_or_create_index(index_name)
-    embeddings_model = get_embeddings_model()
+    embeddings_model = get_embeddings_model(task_type="retrieval_document")
 
     total_stored = 0
 
@@ -187,8 +194,24 @@ def store_chunks(
         # Extract texts for embedding
         texts = [chunk["text"] for chunk in batch]
 
-        # Generate embeddings
-        embeddings = embeddings_model.embed_documents(texts)
+        # Generate embeddings in sub-batches with retry for rate limits
+        embeddings = []
+        for j in range(0, len(texts), EMBED_BATCH_SIZE):
+            sub_texts = texts[j:j + EMBED_BATCH_SIZE]
+            for attempt in range(5):
+                try:
+                    sub_embeddings = embeddings_model.embed_documents(sub_texts)
+                    embeddings.extend(sub_embeddings)
+                    break
+                except Exception as e:
+                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                        wait = 60 * (attempt + 1)
+                        print(f"Rate limited, waiting {wait}s (attempt {attempt + 1}/5)...")
+                        time.sleep(wait)
+                    else:
+                        raise
+            else:
+                raise RuntimeError("Failed after 5 retries due to rate limiting")
 
         # Prepare vectors for upsert
         vectors = []

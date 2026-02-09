@@ -209,6 +209,7 @@ def log_query_response(
             metadata[f"suggested_{ep_num}_title"] = episode.get("title", "")
             metadata[f"suggested_{ep_num}_guest"] = episode.get("guest", "")
             metadata[f"suggested_{ep_num}_url"] = episode.get("youtube_url", "")
+            metadata[f"suggested_{ep_num}_timestamp"] = episode.get("estimated_timestamp", "")
 
         # Create the main trace span
         with client.start_as_current_span(
