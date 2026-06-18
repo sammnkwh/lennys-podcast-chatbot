@@ -201,6 +201,8 @@ def store_chunks(
             for attempt in range(5):
                 try:
                     sub_embeddings = embeddings_model.embed_documents(sub_texts)
+                    # Truncate to the index dimension (see note in search()).
+                    sub_embeddings = [e[:EMBEDDING_DIMENSIONS] for e in sub_embeddings]
                     embeddings.extend(sub_embeddings)
                     break
                 except Exception as e:
@@ -258,8 +260,12 @@ def search(
     index = get_or_create_index(index_name)
     embeddings_model = get_embeddings_model()
 
-    # Generate query embedding
-    query_embedding = embeddings_model.embed_query(query)
+    # Generate query embedding.
+    # gemini-embedding-001 returns 3072 dims and the installed langchain-google-genai
+    # ignores output_dimensionality, so truncate to the index's 768. The model is
+    # Matryoshka (first-768 == the 768-dim embedding), so this matches how the index
+    # was built and is cosine-equivalent.
+    query_embedding = embeddings_model.embed_query(query)[:EMBEDDING_DIMENSIONS]
 
     # Search Pinecone
     search_kwargs = {
