@@ -5,7 +5,7 @@ langchain-google-genai>=1.0.0
 langchain-community>=0.0.20
 
 # Document processing
-python-frontmatter>=1.0.0
+python-frontmatter>=1.0.0,<1.1  # <1.1 avoids the typing.TypeGuard import (Python 3.10+); keeps Python 3.9 working
 
 # Vector database
 pinecone>=5.0.0

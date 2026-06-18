@@ -5,6 +5,8 @@ A Streamlit app that answers questions about Lenny's Podcast episodes
 using RAG (Retrieval-Augmented Generation).
 """
 
+from __future__ import annotations  # PEP 604 unions (int | None) on Python 3.9
+
 import streamlit as st
 from dotenv import load_dotenv
 
