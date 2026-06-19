@@ -21,7 +21,8 @@ def get_langfuse_client():
         return Langfuse(
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-            host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+            host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+            timeout=60,  # us-region read API is slow; default timeout was too short
         )
     except Exception as e:
         print(f"Error initializing Langfuse: {e}")
